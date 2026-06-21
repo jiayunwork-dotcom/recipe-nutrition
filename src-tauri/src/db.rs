@@ -1310,7 +1310,7 @@ impl Database {
         self.rollback_to_version_with_keep(version_id, &[])
     }
 
-    pub fn rollback_to_version_with_keep(&self, version_id: i64, keep_ingredient_ids: &[i64]) -> Result<Recipe> {
+    pub fn rollback_to_version_with_keep(&self, version_id: i64, keep_ingredients: &[(i64, f64)]) -> Result<Recipe> {
         let conn = self.conn.lock().unwrap();
         let version = self.get_recipe_version(version_id)?;
         let now = Utc::now().to_rfc3339();
@@ -1327,11 +1327,11 @@ impl Database {
             ).ok();
         }
 
-        for &keep_id in keep_ingredient_ids {
-            if !snapshot.iter().any(|s| s.ingredient_id == keep_id) {
+        for (keep_id, keep_amount) in keep_ingredients {
+            if !snapshot.iter().any(|s| s.ingredient_id == *keep_id) {
                 conn.execute(
                     "INSERT INTO recipe_ingredients (recipe_id, ingredient_id, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                    params![version.recipe_id, keep_id, 100.0, now, now],
+                    params![version.recipe_id, *keep_id, *keep_amount, now, now],
                 ).ok();
             }
         }

@@ -432,10 +432,10 @@ fn rollback_to_version(state: State<AppState>, version_id: i64) -> Result<Recipe
 fn rollback_to_version_with_keep(
     state: State<AppState>,
     version_id: i64,
-    keep_ingredient_ids: Vec<i64>,
+    keep_ingredients: Vec<(i64, f64)>,
 ) -> Result<Recipe, String> {
     state.db
-        .rollback_to_version_with_keep(version_id, &keep_ingredient_ids)
+        .rollback_to_version_with_keep(version_id, &keep_ingredients)
         .map_err(|e| e.to_string())
 }
 

@@ -541,18 +541,28 @@
         >
           <div class="version-header" @click="toggleVersionExpand(ver)">
             <div class="version-info">
-              <el-checkbox
-                :model-value="selectedCompareIds.includes(ver.id)"
-                @change="(val: boolean) => toggleCompareSelect(ver.id, val)"
-                @click.stop
-                size="small"
-              />
-              <el-checkbox
-                :model-value="selectedExportIds.includes(ver.id)"
-                @change="(val: boolean) => toggleExportSelect(ver.id, val)"
-                @click.stop
-                size="small"
-              />
+              <el-tooltip content="对比（选择2个）" placement="top">
+                <el-checkbox
+                  :model-value="selectedCompareIds.includes(ver.id)"
+                  @change="(val: boolean) => toggleCompareSelect(ver.id, val)"
+                  @click.stop
+                  size="small"
+                  class="compare-checkbox"
+                >
+                  <el-icon :size="12"><DataLine /></el-icon>
+                </el-checkbox>
+              </el-tooltip>
+              <el-tooltip content="导出（可多选）" placement="top">
+                <el-checkbox
+                  :model-value="selectedExportIds.includes(ver.id)"
+                  @change="(val: boolean) => toggleExportSelect(ver.id, val)"
+                  @click.stop
+                  size="small"
+                  class="export-checkbox"
+                >
+                  <el-icon :size="12"><Download /></el-icon>
+                </el-checkbox>
+              </el-tooltip>
               <el-icon
                 class="star-btn"
                 :class="{ starred: ver.is_starred }"
@@ -977,8 +987,14 @@ interface ConflictItem {
 const conflictItems = ref<ConflictItem[]>([])
 
 const sortedVersions = computed(() => {
-  const starred = versions.value.filter(v => v.is_starred)
-  const unstarred = versions.value.filter(v => !v.is_starred)
+  const compareCreatedAtDesc = (a: RecipeVersion, b: RecipeVersion) => {
+    const ta = new Date(a.created_at).getTime()
+    const tb = new Date(b.created_at).getTime()
+    if (tb !== ta) return tb - ta
+    return b.version_number - a.version_number
+  }
+  const starred = versions.value.filter(v => v.is_starred).sort(compareCreatedAtDesc)
+  const unstarred = versions.value.filter(v => !v.is_starred).sort(compareCreatedAtDesc)
   return [...starred, ...unstarred]
 })
 
@@ -1704,9 +1720,11 @@ async function handleRollback(ver: RecipeVersion) {
 
 async function executeRollbackWithMerge() {
   if (!currentRecipe.value || !rollbackTargetVersion.value) return
-  const keepIds = conflictItems.value.filter(i => i.action === 'keep').map(i => i.ingredient_id)
+  const keepPairs: Array<[number, number]> = conflictItems.value
+    .filter(i => i.action === 'keep')
+    .map(i => [i.ingredient_id, i.amount] as [number, number])
   try {
-    await versionApi.rollbackWithKeep(rollbackTargetVersion.value.id, keepIds)
+    await versionApi.rollbackWithKeep(rollbackTargetVersion.value.id, keepPairs)
     versions.value = await versionApi.getAll(currentRecipe.value.id)
     expandedVersionId.value = null
     conflictDialogVisible.value = false

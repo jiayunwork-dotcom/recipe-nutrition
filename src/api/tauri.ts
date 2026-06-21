@@ -132,8 +132,8 @@ export const versionApi = {
   rollback: (versionId: number): Promise<Recipe> =>
     invoke('rollback_to_version', { versionId }),
 
-  rollbackWithKeep: (versionId: number, keepIngredientIds: number[]): Promise<Recipe> =>
-    invoke('rollback_to_version_with_keep', { versionId, keepIngredientIds }),
+  rollbackWithKeep: (versionId: number, keepIngredients: Array<[number, number]>): Promise<Recipe> =>
+    invoke('rollback_to_version_with_keep', { versionId, keepIngredients }),
 
   updateNote: (versionId: number, note: string): Promise<RecipeVersion> =>
     invoke('update_version_note', { versionId, note }),
