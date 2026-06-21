@@ -16,9 +16,17 @@
           <el-icon><Notebook /></el-icon>
           <span>配方管理</span>
         </el-menu-item>
+        <el-menu-item index="/templates">
+          <el-icon><CollectionTag /></el-icon>
+          <span>配方模板</span>
+        </el-menu-item>
         <el-menu-item index="/ingredients">
           <el-icon><Collection /></el-icon>
           <span>食材库</span>
+        </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <span>设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>
@@ -41,16 +49,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Food, Notebook, Collection } from '@element-plus/icons-vue'
+import { Food, Notebook, Collection, CollectionTag, Setting } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 
 const activeMenu = computed(() => {
   if (route.path.startsWith('/recipes')) return '/recipes'
+  if (route.path.startsWith('/templates')) return '/templates'
   if (route.path.startsWith('/ingredients')) return '/ingredients'
+  if (route.path.startsWith('/settings')) return '/settings'
   return '/recipes'
 })
 
@@ -59,6 +69,8 @@ const pageTitle = computed(() => {
   if (route.path === '/ingredients') return '食材库管理'
   if (route.path === '/recipes/new') return '新建配方'
   if (route.path.startsWith('/recipes/')) return '配方详情'
+  if (route.path === '/templates') return '配方模板库'
+  if (route.path === '/settings') return '系统设置'
   return ''
 })
 

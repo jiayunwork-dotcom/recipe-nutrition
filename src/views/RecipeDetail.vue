@@ -303,9 +303,47 @@
             </el-tab-pane>
           </el-tabs>
 
+          <div class="preset-section">
+            <div class="section-title">营养目标预设</div>
+            <el-select
+              v-model="selectedPresetId"
+              placeholder="选择营养约束预设"
+              clearable
+              style="width: 100%;"
+              @change="handlePresetChange"
+            >
+              <el-option
+                v-for="p in presets"
+                :key="p.id"
+                :label="p.name"
+                :value="p.id"
+              />
+            </el-select>
+            <div v-if="currentPreset" class="preset-info">
+              <span class="preset-name">{{ currentPreset.name }}</span>
+              <el-button link size="small" @click="goToSettings">
+                管理预设
+              </el-button>
+            </div>
+          </div>
+
           <div class="export-section">
-            <div class="section-title">导出</div>
-            <el-row :gutter="12">
+            <div class="section-title">配方分享</div>
+            <el-row :gutter="12" style="margin-bottom: 12px;">
+              <el-col :span="12">
+                <el-button type="primary" plain style="width: 100%;" @click="openSaveTemplateDialog">
+                  <el-icon><CollectionTag /></el-icon>
+                  保存为模板
+                </el-button>
+              </el-col>
+              <el-col :span="12">
+                <el-button type="info" plain style="width: 100%;" @click="openVersionsDrawer">
+                  <el-icon><Clock /></el-icon>
+                  历史版本
+                </el-button>
+              </el-col>
+            </el-row>
+            <el-row :gutter="12" style="margin-bottom: 12px;">
               <el-col :span="12">
                 <el-button type="success" style="width: 100%;" @click="exportPDF">
                   <el-icon><Document /></el-icon>
@@ -316,6 +354,20 @@
                 <el-button type="warning" style="width: 100%;" @click="exportExcel">
                   <el-icon><Grid /></el-icon>
                   导出 Excel
+                </el-button>
+              </el-col>
+            </el-row>
+            <el-row :gutter="12">
+              <el-col :span="12">
+                <el-button type="primary" style="width: 100%;" @click="exportJSON">
+                  <el-icon><Download /></el-icon>
+                  导出 JSON
+                </el-button>
+              </el-col>
+              <el-col :span="12">
+                <el-button type="danger" plain style="width: 100%;" @click="handleImportClick">
+                  <el-icon><Upload /></el-icon>
+                  导入 JSON
                 </el-button>
               </el-col>
             </el-row>
@@ -388,6 +440,292 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-drawer
+      v-model="versionsDrawerVisible"
+      title="配方历史版本"
+      direction="rtl"
+      size="480px"
+    >
+      <div class="versions-toolbar">
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="!currentRecipe"
+          @click="handleCreateSnapshot"
+        >
+          <el-icon><Plus /></el-icon>
+          保存当前版本
+        </el-button>
+      </div>
+      <div v-if="versionsLoading" class="versions-loading">
+        <el-icon class="is-loading" :size="24"><Loading /></el-icon>
+        加载中...
+      </div>
+      <el-empty
+        v-else-if="versions.length === 0"
+        description="暂无历史版本，点击上方按钮保存"
+      />
+      <div v-else class="versions-list">
+        <div
+          v-for="(ver, idx) in versions"
+          :key="ver.id"
+          class="version-item"
+          :class="{ active: expandedVersionId === ver.id }"
+          @click="toggleVersionExpand(ver)"
+        >
+          <div class="version-header">
+            <div class="version-info">
+              <span class="version-badge">
+                v{{ ver.version_number }}
+                <el-tag
+                  v-if="ver.is_rollback"
+                  type="warning"
+                  size="small"
+                  effect="plain"
+                  style="margin-left: 4px;"
+                >回退</el-tag>
+              </span>
+              <span class="version-time">{{ formatVersionTime(ver.created_at) }}</span>
+            </div>
+            <el-icon class="expand-icon">
+              <ArrowDown v-if="expandedVersionId !== ver.id" />
+              <ArrowUp v-else />
+            </el-icon>
+          </div>
+          <div class="version-summary">{{ ver.summary }}</div>
+
+          <div v-if="expandedVersionId === ver.id" class="version-detail">
+            <div v-if="versionDiffs[ver.id]" class="diff-section">
+              <div v-if="versionDiffs[ver.id]!.added.length > 0" class="diff-group">
+                <div class="diff-title added">新增食材</div>
+                <div v-for="item in versionDiffs[ver.id]!.added" :key="item" class="diff-item">
+                  <el-icon color="#67c23a"><CirclePlus /></el-icon>{{ item }}
+                </div>
+              </div>
+              <div v-if="versionDiffs[ver.id]!.removed.length > 0" class="diff-group">
+                <div class="diff-title removed">移除食材</div>
+                <div v-for="item in versionDiffs[ver.id]!.removed" :key="item" class="diff-item">
+                  <el-icon color="#f56c6c"><CircleClose /></el-icon>{{ item }}
+                </div>
+              </div>
+              <div v-if="versionDiffs[ver.id]!.modified.length > 0" class="diff-group">
+                <div class="diff-title modified">调整用量</div>
+                <div v-for="item in versionDiffs[ver.id]!.modified" :key="item" class="diff-item">
+                  <el-icon color="#e6a23c"><Edit /></el-icon>{{ item }}
+                </div>
+              </div>
+              <div
+                v-if="!versionDiffs[ver.id]!.added.length && !versionDiffs[ver.id]!.removed.length && !versionDiffs[ver.id]!.modified.length"
+                class="diff-empty"
+              >
+                基础信息变更（名称、分类、份数、备注等）
+              </div>
+            </div>
+            <div class="version-nutrition">
+              <div class="vn-title">当时营养总量</div>
+              <div v-if="versionNutrition[ver.id]" class="vn-grid">
+                <div class="vn-item">
+                  <span class="label">热量</span>
+                  <span class="value">{{ versionNutrition[ver.id]!.calories.toFixed(0) }} kcal</span>
+                </div>
+                <div class="vn-item">
+                  <span class="label">蛋白质</span>
+                  <span class="value">{{ versionNutrition[ver.id]!.protein.toFixed(1) }} g</span>
+                </div>
+                <div class="vn-item">
+                  <span class="label">脂肪</span>
+                  <span class="value">{{ versionNutrition[ver.id]!.fat.toFixed(1) }} g</span>
+                </div>
+                <div class="vn-item">
+                  <span class="label">碳水</span>
+                  <span class="value">{{ versionNutrition[ver.id]!.carbs.toFixed(1) }} g</span>
+                </div>
+              </div>
+            </div>
+            <div class="version-actions">
+              <el-button
+                type="primary"
+                size="small"
+                @click.stop="handleRollback(ver)"
+              >
+                <el-icon><RefreshLeft /></el-icon>
+                回退到此版本
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-drawer>
+
+    <el-dialog
+      v-model="importDialogVisible"
+      title="导入配方 JSON"
+      width="720px"
+      :close-on-click-modal="false"
+    >
+      <template v-if="importStep === 'select'">
+        <div class="import-step-intro">
+          <p>请选择一个配方 JSON 文件进行导入。导入过程中将智能匹配本地食材库。</p>
+          <el-upload
+            :auto-upload="false"
+            :show-file-list="false"
+            :on-change="handleImportFileChange"
+            accept=".json"
+            drag
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">
+              将 JSON 文件拖到此处，或<em>点击选择</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip">只能上传 .json 格式的配方文件</div>
+            </template>
+          </el-upload>
+        </div>
+      </template>
+
+      <template v-else-if="importStep === 'preview' && importPreview">
+        <div class="import-preview-header">
+          <el-descriptions :column="2" size="small" border>
+            <el-descriptions-item label="配方名称">{{ importPreview.recipe.name }}</el-descriptions-item>
+            <el-descriptions-item label="分类">{{ importPreview.recipe.category }}</el-descriptions-item>
+            <el-descriptions-item label="份数">{{ importPreview.recipe.servings }}</el-descriptions-item>
+            <el-descriptions-item label="备注">{{ importPreview.recipe.notes || '-' }}</el-descriptions-item>
+          </el-descriptions>
+
+          <div v-if="importPreview.nutrition_preset" class="preset-preview">
+            <el-alert
+              :title="`营养预设: ${importPreview.nutrition_preset.name}${importPreview.preset_exists ? '（已存在，将关联）' : '（不存在，将新建）'}`"
+              :type="importPreview.preset_exists ? 'success' : 'warning'"
+              show-icon
+              :closable="false"
+              style="margin-top: 12px;"
+            />
+          </div>
+        </div>
+
+        <div class="import-match-list">
+          <div class="section-sub-title">食材匹配确认（共 {{ importPreview.ingredient_matches.length }} 项）</div>
+          <div
+            v-for="(match, idx) in importPreview.ingredient_matches"
+            :key="idx"
+            class="match-item"
+            :class="{ needs-review: match.requires_confirmation }"
+          >
+            <div class="match-exported">
+              <el-tag size="small" type="info">{{ match.exported.category }}</el-tag>
+              <span class="match-name">{{ match.exported.name }}</span>
+              <span class="match-amount">({{ match.exported.amount }}g)</span>
+              <el-tag
+                v-if="match.requires_confirmation"
+                size="small"
+                type="warning"
+                effect="dark"
+                style="margin-left: 8px;"
+              >需确认</el-tag>
+            </div>
+
+            <div class="match-actions">
+              <el-radio-group v-model="match.action" size="small">
+                <el-radio-button
+                  v-if="match.matched_local"
+                  value="use_exact"
+                >使用匹配</el-radio-button>
+                <el-radio-button value="add_new">添加为新食材</el-radio-button>
+                <el-radio-button
+                  v-if="match.candidates.length > 0"
+                  value="use_candidate"
+                >选择替代</el-radio-button>
+              </el-radio-group>
+
+              <div v-if="match.action === 'use_exact' && match.matched_local" class="match-selected">
+                → <el-tag type="success" size="small">{{ match.matched_local.name }}</el-tag>
+                <span class="match-meta">({{ match.matched_local.category }})</span>
+              </div>
+
+              <div v-if="match.action === 'add_new'" class="match-new-info">
+                将添加新食材
+                <span class="match-nutrition">
+                  热{{ match.exported.calories.toFixed(0) }}/蛋{{ match.exported.protein.toFixed(1) }}/脂{{ match.exported.fat.toFixed(1) }}g
+                </span>
+              </div>
+
+              <div v-if="match.action === 'use_candidate'" class="candidate-list">
+                <el-select
+                  v-model="match.selected_ingredient_id"
+                  placeholder="选择替代食材"
+                  size="small"
+                  style="min-width: 200px;"
+                >
+                  <el-option
+                    v-for="c in match.candidates"
+                    :key="c.local_ingredient.id"
+                    :label="`${c.local_ingredient.name} (相似度 ${(c.similarity_score * 100).toFixed(0)}%)`"
+                    :value="c.local_ingredient.id"
+                  />
+                </el-select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <template v-if="importStep === 'select'">
+          <el-button @click="importDialogVisible = false">取消</el-button>
+        </template>
+        <template v-else-if="importStep === 'preview'">
+          <el-button @click="importStep = 'select'">返回</el-button>
+          <el-button type="primary" :disabled="!canExecuteImport" @click="executeImport">
+            确认导入
+          </el-button>
+        </template>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="saveTemplateDialogVisible"
+      title="保存为配方模板"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <el-form :model="templateForm" label-width="80px">
+        <el-form-item label="模板名称" required>
+          <el-input v-model="templateForm.name" maxlength="100" placeholder="输入模板名称" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="templateForm.description" type="textarea" :rows="2" maxlength="200" placeholder="模板用途或简介" />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-input
+            v-model="templateForm.tagsStr"
+            placeholder="多个标签用逗号分隔，如：早餐,减脂,高蛋白"
+          />
+        </el-form-item>
+        <el-form-item label="关联预设">
+          <el-select
+            v-model="templateForm.presetId"
+            placeholder="关联营养约束预设（可选）"
+            clearable
+            style="width: 100%;"
+          >
+            <el-option
+              v-for="p in presets"
+              :key="p.id"
+              :label="p.name"
+              :value="p.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="saveTemplateDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!templateForm.name.trim()" @click="executeSaveTemplate">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -396,17 +734,31 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Star, StarFilled, Plus, Delete, Search, Download, Document, Grid, RefreshRight } from '@element-plus/icons-vue'
+  Star, StarFilled, Plus, Delete, Search, Download, Document, Grid, RefreshRight,
+  Clock, CollectionTag, Upload, Loading, ArrowDown, ArrowUp, CirclePlus, CircleClose,
+  RefreshLeft, UploadFilled, Setting
+} from '@element-plus/icons-vue'
 import { useRecipeStore } from '@/stores/recipe'
 import { useIngredientStore } from '@/stores/ingredient'
-import { RECIPE_CATEGORIES, NUTRIENT_LABELS, NUTRIENT_UNITS, type NutritionSummary } from '@/types'
+import {
+  RECIPE_CATEGORIES, NUTRIENT_LABELS, NUTRIENT_UNITS, NUTRIENT_PRESET_KEYS,
+  type NutritionSummary,
+  type NutritionPreset,
+  type RecipeVersion,
+  type VersionDiffSummary,
+  type ImportPreview,
+  type ImportIngredientMatch,
+  type ImportConfirmedItem,
+  type NutrientKey,
+} from '@/types'
 import DRIRadarChart from '@/components/DRIRadarChart.vue'
 import NutritionLabel from '@/components/NutritionLabel.vue'
 import IngredientReplacePanel from '@/components/IngredientReplacePanel.vue'
-import type { RecipeIngredient, Ingredient } from '@/types'
+import type { RecipeIngredient, Ingredient, NutritionSummary as NutrSum } from '@/types'
+import { presetApi, versionApi, templateApi, exchangeApi } from '@/api/tauri'
 import html2canvas from 'html2canvas'
-import { save } from '@tauri-apps/plugin-dialog'
-import { writeFile } from '@tauri-apps/plugin-fs'
+import { save, open } from '@tauri-apps/plugin-dialog'
+import { writeFile, readTextFile } from '@tauri-apps/plugin-fs'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 
@@ -439,8 +791,65 @@ const selectedIngredientForReplace = ref<Ingredient | null>(null)
 const selectedIngredientAmount = ref<number>(0)
 const selectedRecipeIngredientId = ref<number | null>(null)
 
+const presets = ref<NutritionPreset[]>([])
+const selectedPresetId = ref<number | null>(null)
+const currentPreset = computed(() =>
+  selectedPresetId.value ? presets.value.find(p => p.id === selectedPresetId.value) || null : null
+)
+
+const versionsDrawerVisible = ref(false)
+const versionsLoading = ref(false)
+const versions = ref<RecipeVersion[]>([])
+const expandedVersionId = ref<number | null>(null)
+const versionDiffs = reactive<Record<number, VersionDiffSummary | undefined>>({})
+const versionNutrition = reactive<Record<number, NutritionSummary | undefined>>({})
+
+const importDialogVisible = ref(false)
+const importStep = ref<'select' | 'preview'>('select')
+const importPreview = ref<ImportPreview | null>(null)
+const importRawJson = ref('')
+
+const saveTemplateDialogVisible = ref(false)
+const templateForm = reactive({
+  name: '',
+  description: '',
+  tagsStr: '',
+  presetId: null as number | null,
+})
+
 const currentRecipe = computed(() => recipeStore.currentRecipe)
 const nutrition = computed(() => recipeStore.nutritionCalculations)
+
+const presetViolations = computed(() => {
+  const result: Record<string, { exceeded: boolean; diff: number; message: string }> = {}
+  if (!nutrition.value || !currentPreset.value) return result
+
+  const perServing = nutrition.value.perServing
+  const p = currentPreset.value
+  for (const nk of NUTRIENT_PRESET_KEYS) {
+    const val = (perServing as any)[nk.key] as number
+    const max = (p as any)[`max_${nk.key}`] as number | null
+    const min = (p as any)[`min_${nk.key}`] as number | null
+    if (max !== null && val > max) {
+      result[nk.key] = {
+        exceeded: true,
+        diff: val - max,
+        message: `超出上限 ${(val - max).toFixed(1)} ${nk.unit}`
+      }
+    } else if (min !== null && val < min) {
+      result[nk.key] = {
+        exceeded: false,
+        diff: min - val,
+        message: `低于下限 ${(min - val).toFixed(1)} ${nk.unit}`
+      }
+    }
+  }
+  return result
+})
+
+function getPresetValue(preset: NutritionPreset, key: NutrientKey, type: 'min' | 'max'): number | null {
+  return (preset as any)[`${type}_${key}`] ?? null
+}
 
 const filteredIngredientsForAdd = computed(() => {
   let result = ingredientStore.ingredients
@@ -459,7 +868,8 @@ const filteredIngredientsForAdd = computed(() => {
 
 onMounted(async () => {
   await ingredientStore.loadIngredients()
-  
+  presets.value = await presetApi.getAll().catch(() => [])
+
   const recipeId = route.params.id
   if (recipeId && recipeId !== 'new') {
     await recipeStore.loadRecipe(Number(recipeId))
@@ -468,6 +878,9 @@ onMounted(async () => {
       recipeForm.category = currentRecipe.value.category
       recipeForm.servings = currentRecipe.value.servings
       recipeForm.notes = currentRecipe.value.notes
+      try {
+        selectedPresetId.value = await presetApi.getRecipePresetId(currentRecipe.value.id)
+      } catch (_) { /* ignore */ }
     }
   } else {
     router.replace('/recipes')
@@ -851,6 +1264,256 @@ async function exportExcel() {
     handleExportError(error, 'Excel')
   }
 }
+
+async function handlePresetChange(val: number | null) {
+  if (!currentRecipe.value) return
+  try {
+    await presetApi.setRecipePreset(currentRecipe.value.id, val)
+    ElMessage.success(val ? '已关联营养预设' : '已取消营养预设关联')
+  } catch (e: any) {
+    ElMessage.error(e || '预设关联失败')
+  }
+}
+
+async function openVersionsDrawer() {
+  if (!currentRecipe.value) return
+  versionsDrawerVisible.value = true
+  versionsLoading.value = true
+  expandedVersionId.value = null
+  try {
+    versions.value = await versionApi.getAll(currentRecipe.value.id)
+  } catch (e: any) {
+    ElMessage.error(e || '加载版本失败')
+    versions.value = []
+  } finally {
+    versionsLoading.value = false
+  }
+}
+
+function parseVersionNutrition(raw: string): NutrSum {
+  try {
+    const obj = JSON.parse(raw)
+    return {
+      calories: obj.calories ?? 0,
+      calories_kj: obj.calories_kj ?? 0,
+      protein: obj.protein ?? 0,
+      fat: obj.fat ?? 0,
+      carbs: obj.carbs ?? 0,
+      fiber: obj.fiber ?? 0,
+      sodium: obj.sodium ?? 0,
+      calcium: obj.calcium ?? 0,
+      iron: obj.iron ?? 0,
+      vitamin_a: obj.vitamin_a ?? 0,
+      vitamin_c: obj.vitamin_c ?? 0,
+    }
+  } catch {
+    return {} as NutrSum
+  }
+}
+
+function computeVersionDiff(version: RecipeVersion, prevIdx: number): VersionDiffSummary {
+  const curIngs: any[] = []
+  const prevIngs: any[] = []
+  try {
+    const c = JSON.parse(version.ingredients_snapshot)
+    for (const it of c) curIngs.push({ id: it.ingredient_id ?? it.id, name: it.name, amount: it.amount })
+  } catch { /* ignore */ }
+  if (prevIdx < versions.value.length) {
+    try {
+      const p = JSON.parse(versions.value[prevIdx].ingredients_snapshot)
+      for (const it of p) prevIngs.push({ id: it.ingredient_id ?? it.id, name: it.name, amount: it.amount })
+    } catch { /* ignore */ }
+  }
+
+  const curMap = new Map(curIngs.map(i => [i.id, i]))
+  const prevMap = new Map(prevIngs.map(i => [i.id, i]))
+  const added: string[] = []
+  const removed: string[] = []
+  const modified: string[] = []
+
+  for (const [id, it] of curMap) {
+    const p = prevMap.get(id)
+    if (!p) added.push(`${it.name} ${it.amount}g`)
+    else if (Math.abs(p.amount - it.amount) > 0.001) modified.push(`${it.name}: ${p.amount}g → ${it.amount}g`)
+  }
+  for (const [id, it] of prevMap) {
+    if (!curMap.has(id)) removed.push(`${it.name} ${it.amount}g`)
+  }
+  return { added, removed, modified }
+}
+
+function toggleVersionExpand(ver: RecipeVersion) {
+  const idx = versions.value.findIndex(v => v.id === ver.id)
+  if (expandedVersionId.value === ver.id) {
+    expandedVersionId.value = null
+    return
+  }
+  expandedVersionId.value = ver.id
+  versionNutrition[ver.id] = parseVersionNutrition(ver.nutrition_snapshot)
+  versionDiffs[ver.id] = computeVersionDiff(ver, idx + 1)
+}
+
+function formatVersionTime(t: string) {
+  const d = new Date(t)
+  const now = new Date()
+  const sameDay = d.toDateString() === now.toDateString()
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (sameDay) return `今天 ${hhmm}`
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`
+}
+
+async function handleCreateSnapshot() {
+  if (!currentRecipe.value) return
+  try {
+    const v = await versionApi.createSnapshot(currentRecipe.value.id, '手动保存的快照')
+    versions.value = await versionApi.getAll(currentRecipe.value.id)
+    ElMessage.success(`已保存版本 v${v.version_number}`)
+  } catch (e: any) {
+    ElMessage.error(e || '保存版本失败')
+  }
+}
+
+async function handleRollback(ver: RecipeVersion) {
+  if (!currentRecipe.value) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要回退到 v${ver.version_number}（${formatVersionTime(ver.created_at)}）吗？\n这将创建一条新的版本记录。`,
+      '确认回退',
+      { type: 'warning' }
+    )
+    await versionApi.rollback(ver.id)
+    versions.value = await versionApi.getAll(currentRecipe.value.id)
+    expandedVersionId.value = null
+    await recipeStore.loadRecipe(currentRecipe.value.id)
+    if (currentRecipe.value) {
+      recipeForm.name = currentRecipe.value.name
+      recipeForm.category = currentRecipe.value.category
+      recipeForm.servings = currentRecipe.value.servings
+      recipeForm.notes = currentRecipe.value.notes
+    }
+  } catch (e) {
+    if (e === 'cancel') return
+    ElMessage.error('回退失败')
+  }
+}
+
+function openSaveTemplateDialog() {
+  if (!currentRecipe.value) return
+  templateForm.name = recipeForm.name
+  templateForm.description = recipeForm.notes
+  templateForm.tagsStr = ''
+  templateForm.presetId = selectedPresetId.value
+  saveTemplateDialogVisible.value = true
+}
+
+async function executeSaveTemplate() {
+  if (!currentRecipe.value || !templateForm.name.trim()) return
+  try {
+    await templateApi.create({
+      recipe_id: currentRecipe.value.id,
+      name: templateForm.name.trim(),
+      description: templateForm.description,
+      category: currentRecipe.value.category,
+      servings: currentRecipe.value.servings,
+      notes: currentRecipe.value.notes,
+      tags: templateForm.tagsStr.split(/[,，]/).map(s => s.trim()).filter(Boolean),
+      nutrition_preset_id: templateForm.presetId,
+    })
+    ElMessage.success('模板已保存')
+    saveTemplateDialogVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(e || '保存模板失败')
+  }
+}
+
+function openImportDialog() {
+  importStep.value = 'select'
+  importPreview.value = null
+  importRawJson.value = ''
+  importDialogVisible.value = true
+}
+
+async function handleImportFileChange(file: any) {
+  if (!file || !file.raw) return
+  try {
+    const reader = new FileReader()
+    reader.onload = async (ev) => {
+      try {
+        const text = (ev.target as any).result
+        importRawJson.value = text
+        const preview = await exchangeApi.previewImport(text)
+        importPreview.value = preview
+        for (const m of preview.ingredient_matches) {
+          if (m.matched_local) {
+            m.action = 'use_exact'
+            m.requires_confirmation = false
+          } else if (m.candidates.length > 0) {
+            m.action = 'use_candidate'
+            m.selected_ingredient_id = m.candidates[0].local_ingredient.id
+            m.requires_confirmation = true
+          } else {
+            m.action = 'add_new'
+            m.requires_confirmation = true
+          }
+        }
+        importStep.value = 'preview'
+      } catch (e: any) {
+        ElMessage.error(e || '文件解析失败')
+      }
+    }
+    reader.readAsText(file.raw)
+  } catch (e: any) {
+    ElMessage.error(e || '读取文件失败')
+  }
+}
+
+const canExecuteImport = computed(() => {
+  if (!importPreview.value) return false
+  for (const m of importPreview.value.ingredient_matches) {
+    if (m.action === 'use_exact' && !m.matched_local) return false
+    if (m.action === 'use_candidate' && !m.selected_ingredient_id) return false
+  }
+  return true
+})
+
+async function executeImport() {
+  if (!importPreview.value) return
+  const confirmed: ImportConfirmedItem[] = []
+  for (const m of importPreview.value.ingredient_matches) {
+    confirmed.push({
+      exported: m.exported,
+      action: m.action,
+      selected_ingredient_id: m.action === 'use_candidate' ? m.selected_ingredient_id : undefined,
+    })
+  }
+  try {
+    const result = await exchangeApi.executeImport(importRawJson.value, confirmed)
+    importDialogVisible.value = false
+    ElMessage.success(`导入成功，${result.new_ingredients_added}种新食材已添加`)
+    router.push(`/recipes/${result.recipe_id}`)
+    setTimeout(() => location.reload(), 200)
+  } catch (e: any) {
+    ElMessage.error(e || '导入失败')
+  }
+}
+
+async function exportJson() {
+  if (!currentRecipe.value) return
+  try {
+    const json = await exchangeApi.exportJson(currentRecipe.value.id)
+    const filePath = await save({
+      defaultPath: `${recipeForm.name}_recipe.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (filePath) {
+      const encoder = new TextEncoder()
+      await writeFile(filePath, encoder.encode(json))
+      ElMessage.success('JSON 导出成功')
+    }
+  } catch (e: any) {
+    ElMessage.error(e || 'JSON 导出失败')
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -1122,6 +1785,337 @@ async function exportExcel() {
       margin-left: 8px;
       color: #606266;
     }
+  }
+
+  .preset-section {
+    margin-bottom: 20px;
+    padding: 16px;
+    background: #ecf5ff;
+    border-radius: 8px;
+
+    .section-title {
+      font-weight: 600;
+      color: #409eff;
+      margin-bottom: 10px;
+    }
+
+    .preset-info {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+
+      .preset-item {
+        font-size: 12px;
+        padding: 4px 8px;
+        background: rgba(64, 158, 255, 0.1);
+        border-radius: 4px;
+        color: #303133;
+
+        &.violation {
+          background: rgba(245, 108, 108, 0.15);
+          color: #f56c6c;
+          font-weight: 500;
+        }
+
+        &.warning {
+          background: rgba(230, 162, 60, 0.15);
+          color: #e6a23c;
+          font-weight: 500;
+        }
+      }
+    }
+  }
+
+  .sharing-section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ebeef5;
+
+    .section-title {
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #ebeef5;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: #303133;
+    }
+
+    .sharing-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+  }
+
+  .versions-toolbar {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #ebeef5;
+  }
+
+  .versions-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 40px 0;
+    color: #909399;
+  }
+
+  .versions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .version-item {
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      border-color: #c0c4cc;
+    }
+
+    &.active {
+      border-color: #409eff;
+      background: #ecf5ff;
+    }
+
+    .version-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      .version-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+
+        .version-badge {
+          font-weight: 700;
+          color: #409eff;
+          font-size: 14px;
+        }
+
+        .version-time {
+          font-size: 12px;
+          color: #909399;
+        }
+      }
+
+      .expand-icon {
+        color: #909399;
+        transition: transform 0.2s;
+      }
+    }
+
+    .version-summary {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #606266;
+      line-height: 1.5;
+    }
+
+    .version-detail {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px dashed #ebeef5;
+    }
+
+    .diff-section {
+      margin-bottom: 14px;
+
+      .diff-group {
+        margin-bottom: 8px;
+
+        .diff-title {
+          font-size: 12px;
+          font-weight: 600;
+          margin-bottom: 4px;
+
+          &.added { color: #67c23a; }
+          &.removed { color: #f56c6c; }
+          &.modified { color: #e6a23c; }
+        }
+
+        .diff-item {
+          font-size: 12px;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 2px 0;
+          color: #303133;
+        }
+      }
+
+      .diff-empty {
+        font-size: 12px;
+        color: #909399;
+        font-style: italic;
+      }
+    }
+
+    .version-nutrition {
+      margin-bottom: 12px;
+
+      .vn-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #303133;
+        margin-bottom: 6px;
+      }
+
+      .vn-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+
+        .vn-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 4px 8px;
+          background: #f5f7fa;
+          border-radius: 4px;
+          font-size: 12px;
+
+          .label { color: #606266; }
+          .value { font-weight: 500; color: #409eff; }
+        }
+      }
+    }
+
+    .version-actions {
+      display: flex;
+      justify-content: flex-end;
+    }
+  }
+
+  .import-step-intro {
+    p {
+      margin: 0 0 16px;
+      color: #606266;
+    }
+  }
+
+  .import-preview-header {
+    margin-bottom: 20px;
+  }
+
+  .section-sub-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #303133;
+    margin: 16px 0 10px;
+  }
+
+  .import-match-list {
+    max-height: 360px;
+    overflow-y: auto;
+  }
+
+  .match-item {
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+
+    &.needs-review {
+      border-color: #e6a23c;
+      background: #fdf6ec;
+    }
+
+    .match-exported {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+
+      .match-name {
+        font-weight: 600;
+        color: #303133;
+      }
+
+      .match-amount {
+        color: #909399;
+        font-size: 12px;
+      }
+    }
+
+    .match-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+
+      .match-selected,
+      .match-new-info,
+      .candidate-list {
+        padding-left: 12px;
+        font-size: 13px;
+      }
+
+      .match-meta {
+        color: #909399;
+        font-size: 12px;
+        margin-left: 4px;
+      }
+
+      .match-nutrition {
+        color: #606266;
+        font-size: 12px;
+        margin-left: 6px;
+        font-family: monospace;
+      }
+    }
+  }
+
+  .share-card {
+    :deep(.el-card__body) {
+      padding: 12px;
+    }
+
+    .card-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: #303133;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-desc {
+      font-size: 12px;
+      color: #606266;
+      line-height: 1.5;
+      margin-bottom: 10px;
+      min-height: 36px;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 6px;
+    }
+  }
+
+  .nutrient-warning-icon {
+    display: inline-flex;
+    margin-left: 4px;
+    vertical-align: middle;
+    cursor: help;
+  }
+
+  .violation-tag {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    font-size: 12px;
   }
 }
 </style>

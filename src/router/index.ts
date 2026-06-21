@@ -25,6 +25,16 @@ const routes: RouteRecordRaw[] = [
     path: '/recipes/new',
     name: 'NewRecipe',
     component: () => import('@/views/RecipeDetail.vue')
+  },
+  {
+    path: '/templates',
+    name: 'Templates',
+    component: () => import('@/views/Templates.vue')
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: () => import('@/views/Settings.vue')
   }
 ]
 

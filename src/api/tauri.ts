@@ -1,5 +1,16 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { Ingredient, Recipe, RecipeIngredient } from '@/types'
+import type {
+  Ingredient,
+  Recipe,
+  RecipeIngredient,
+  RecipeVersion,
+  RecipeTemplate,
+  NutritionPreset,
+  ImportPreview,
+  ImportConfirmedItem,
+  ImportResult,
+  VersionDiffSummary,
+} from '@/types'
 
 export const ingredientApi = {
   getAll: (category?: string, keyword?: string): Promise<Ingredient[]> =>
@@ -79,4 +90,88 @@ export const nutritionApi = {
     totalWeight: number
   }> =>
     invoke('calculate_nutrition', { recipeId })
+}
+
+export const presetApi = {
+  getAll: (): Promise<NutritionPreset[]> =>
+    invoke('get_nutrition_presets'),
+
+  getById: (id: number): Promise<NutritionPreset> =>
+    invoke('get_nutrition_preset', { id }),
+
+  create: (data: Omit<NutritionPreset, 'id' | 'created_at' | 'updated_at'>): Promise<NutritionPreset> =>
+    invoke('create_nutrition_preset', { data }),
+
+  update: (id: number, data: any): Promise<NutritionPreset> =>
+    invoke('update_nutrition_preset', { id, data }),
+
+  delete: (id: number): Promise<void> =>
+    invoke('delete_nutrition_preset', { id }),
+
+  setRecipePreset: (recipeId: number, presetId: number | null): Promise<void> =>
+    invoke('set_recipe_nutrition_preset', { recipeId, presetId }),
+
+  getRecipePresetId: (recipeId: number): Promise<number | null> =>
+    invoke('get_recipe_preset_id', { recipeId }),
+}
+
+export const versionApi = {
+  createSnapshot: (recipeId: number, summary: string): Promise<RecipeVersion> =>
+    invoke('create_version_snapshot', { recipeId, summary }),
+
+  getAll: (recipeId: number): Promise<RecipeVersion[]> =>
+    invoke('get_recipe_versions', { recipeId }),
+
+  getDiff: (
+    versionId: number,
+    previousVersionId: number | null,
+    versionsJson: string
+  ): Promise<VersionDiffSummary> =>
+    invoke('get_version_diff', { versionId, previousVersionId, versionsJson }),
+
+  rollback: (versionId: number): Promise<Recipe> =>
+    invoke('rollback_to_version', { versionId }),
+}
+
+export const templateApi = {
+  getAll: (keyword?: string, tag?: string): Promise<RecipeTemplate[]> =>
+    invoke('get_templates', { keyword, tag }),
+
+  getById: (id: number): Promise<RecipeTemplate> =>
+    invoke('get_template', { id }),
+
+  create: (data: {
+    name: string
+    description: string
+    category: string
+    servings: number
+    notes: string
+    recipe_id: number
+    tags: string[]
+    nutrition_preset_id: number | null
+  }): Promise<RecipeTemplate> =>
+    invoke('create_template', { data }),
+
+  update: (id: number, data: any): Promise<RecipeTemplate> =>
+    invoke('update_template', { id, data }),
+
+  delete: (id: number): Promise<void> =>
+    invoke('delete_template', { id }),
+
+  getAllTags: (): Promise<string[]> =>
+    invoke('get_all_template_tags'),
+
+  createRecipeFromTemplate: (templateId: number, newRecipeName: string): Promise<Recipe> =>
+    invoke('create_recipe_from_template', { templateId, newRecipeName }),
+}
+
+export const exchangeApi = {
+  exportJson: (recipeId: number): Promise<string> =>
+    invoke('export_recipe_json', { recipeId }),
+
+  previewImport: (jsonContent: string): Promise<ImportPreview> =>
+    invoke('preview_import_json', { jsonContent }),
+
+  executeImport: (jsonContent: string, confirmedItems: ImportConfirmedItem[]): Promise<ImportResult> =>
+    invoke('execute_import_json', { jsonContent, confirmedItems }),
 }
