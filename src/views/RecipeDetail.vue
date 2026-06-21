@@ -589,6 +589,33 @@ function applyTargetScale() {
   ElMessage.success('已按目标值缩放')
 }
 
+function handleExportError(error: unknown, type: string) {
+  console.error(`导出${type}失败:`, error)
+  let message = `导出${type}失败`
+  if (error instanceof Error) {
+    const errMsg = error.message.toLowerCase()
+    if (errMsg.includes('forbidden') || errMsg.includes('not allowed') || errMsg.includes('scope') || errMsg.includes('permission') || errMsg.includes('not permitted')) {
+      message = '保存路径权限不足。请尝试保存到以下位置：桌面、文档、下载、图片、主目录下的文件夹'
+    } else if (errMsg.includes('path') && (errMsg.includes('not found') || errMsg.includes('no such'))) {
+      message = '保存路径不存在，请检查路径是否正确'
+    } else if (errMsg.includes('denied') || errMsg.includes('permission denied')) {
+      message = '权限被拒绝，请尝试保存到桌面或文档文件夹'
+    } else if (errMsg.includes('cancelled') || errMsg.includes('canceled')) {
+      return
+    } else {
+      message = `导出${type}失败: ${error.message}`
+    }
+  } else {
+    message = `导出${type}失败: ${String(error)}`
+  }
+  ElMessage({
+    message,
+    type: 'error',
+    duration: 5000,
+    showClose: true
+  })
+}
+
 async function exportLabelImage() {
   if (!nutritionLabelRef.value) {
     ElMessage.warning('营养标签未准备好')
@@ -618,8 +645,7 @@ async function exportLabelImage() {
       ElMessage.success('标签图片导出成功')
     }
   } catch (error) {
-    console.error('导出标签图片失败:', error)
-    ElMessage.error(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
+    handleExportError(error, '标签图片')
   }
 }
 
@@ -698,8 +724,7 @@ async function exportPDF() {
       ElMessage.success('PDF 导出成功')
     }
   } catch (error) {
-    console.error('导出PDF失败:', error)
-    ElMessage.error(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
+    handleExportError(error, 'PDF')
   }
 }
 
@@ -759,8 +784,7 @@ async function exportExcel() {
       ElMessage.success('Excel 导出成功')
     }
   } catch (error) {
-    console.error('导出Excel失败:', error)
-    ElMessage.error(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
+    handleExportError(error, 'Excel')
   }
 }
 </script>
