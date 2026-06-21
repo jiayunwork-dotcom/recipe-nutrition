@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "营养配方管理",
+  "version": "1.0.0",
+  "identifier": "com.recipe.nutrition",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "食品配方管理与营养分析系统",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": [],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "category": "Productivity",
+    "shortDescription": "食品配方管理与营养成分自动计算系统",
+    "longDescription": "面向食品研发人员和营养师的配方开发工具，支持食材库管理、配方编辑、营养自动计算、营养评估、标签生成等功能。"
+  },
+  "plugins": {}
+}
