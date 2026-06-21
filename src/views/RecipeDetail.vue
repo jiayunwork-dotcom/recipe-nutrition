@@ -590,35 +590,44 @@ function applyTargetScale() {
 }
 
 async function exportLabelImage() {
-  if (nutritionLabelRef.value) {
-    const element = nutritionLabelRef.value.getElement()
-    if (element) {
-      try {
-        const filePath = await save({
-          defaultPath: `${recipeForm.name}_营养标签.png`,
-          filters: [{ name: 'PNG', extensions: ['png'] }]
-        })
-        
-        if (filePath) {
-          const canvas = await html2canvas(element, {
-            backgroundColor: '#ffffff',
-            scale: 2
-          })
-          const dataUrl = canvas.toDataURL('image/png')
-          const base64Data = dataUrl.split(',')[1]
-          const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
-          await writeFile(filePath, binaryData)
-          ElMessage.success('标签图片导出成功')
-        }
-      } catch (error) {
-        ElMessage.error('导出失败')
-      }
+  if (!nutritionLabelRef.value) {
+    ElMessage.warning('营养标签未准备好')
+    return
+  }
+  const element = nutritionLabelRef.value.getElement()
+  if (!element) {
+    ElMessage.warning('营养标签未准备好')
+    return
+  }
+  try {
+    const filePath = await save({
+      defaultPath: `${recipeForm.name}_营养标签.png`,
+      filters: [{ name: 'PNG', extensions: ['png'] }]
+    })
+    
+    if (filePath) {
+      const canvas = await html2canvas(element, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true
+      })
+      const dataUrl = canvas.toDataURL('image/png')
+      const base64Data = dataUrl.split(',')[1]
+      const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
+      await writeFile(filePath, binaryData)
+      ElMessage.success('标签图片导出成功')
     }
+  } catch (error) {
+    console.error('导出标签图片失败:', error)
+    ElMessage.error(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 async function exportPDF() {
-  if (!currentRecipe.value || !nutrition.value) return
+  if (!currentRecipe.value || !nutrition.value) {
+    ElMessage.warning('请先创建配方并添加食材')
+    return
+  }
   
   try {
     const filePath = await save({
@@ -684,16 +693,21 @@ async function exportPDF() {
         doc.text(recipeForm.notes, 25, y, { maxWidth: 160 })
       }
       
-      doc.save(filePath)
+      const pdfArrayBuffer = doc.output('arraybuffer')
+      await writeFile(filePath, new Uint8Array(pdfArrayBuffer))
       ElMessage.success('PDF 导出成功')
     }
   } catch (error) {
-    ElMessage.error('导出失败')
+    console.error('导出PDF失败:', error)
+    ElMessage.error(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 async function exportExcel() {
-  if (!currentRecipe.value || !nutrition.value) return
+  if (!currentRecipe.value || !nutrition.value) {
+    ElMessage.warning('请先创建配方并添加食材')
+    return
+  }
   
   try {
     const filePath = await save({
@@ -745,7 +759,8 @@ async function exportExcel() {
       ElMessage.success('Excel 导出成功')
     }
   } catch (error) {
-    ElMessage.error('导出失败')
+    console.error('导出Excel失败:', error)
+    ElMessage.error(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 </script>
