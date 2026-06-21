@@ -1,4 +1,4 @@
-import type { Recipe, RecipeIngredient, NutritionSummary, CostSummary, DRIReference, NRVReference } from '@/types'
+import type { Recipe, RecipeIngredient, NutritionSummary, CostSummary, DRIReference, NRVReference, Ingredient } from '@/types'
 import { DRI_VALUES, NRV_VALUES } from '@/types'
 
 export function calculateTotalNutrition(ingredients: RecipeIngredient[]): NutritionSummary {
@@ -173,4 +173,151 @@ export function scaleRecipeByServings(
     ...ri,
     amount: Number((ri.amount * factor).toFixed(1))
   }))
+}
+
+const NUTRIENT_KEYS_FOR_SIMILARITY = [
+  'calories', 'protein', 'fat', 'carbs', 'fiber',
+  'sodium', 'calcium', 'iron', 'vitamin_a', 'vitamin_c'
+] as const
+
+function getIngredientNutrientVector(ingredient: Ingredient): number[] {
+  return NUTRIENT_KEYS_FOR_SIMILARITY.map(key => ingredient[key])
+}
+
+function getNutrientMaxValues(ingredients: Ingredient[]): number[] {
+  const maxValues = new Array(NUTRIENT_KEYS_FOR_SIMILARITY.length).fill(0)
+  
+  for (const ingredient of ingredients) {
+    const vector = getIngredientNutrientVector(ingredient)
+    for (let i = 0; i < vector.length; i++) {
+      if (vector[i] > maxValues[i]) {
+        maxValues[i] = vector[i]
+      }
+    }
+  }
+  
+  return maxValues.map(v => v === 0 ? 1 : v)
+}
+
+function normalizeVector(vector: number[], maxValues: number[]): number[] {
+  return vector.map((v, i) => v / maxValues[i])
+}
+
+function euclideanDistance(v1: number[], v2: number[]): number {
+  let sum = 0
+  for (let i = 0; i < v1.length; i++) {
+    const diff = v1[i] - v2[i]
+    sum += diff * diff
+  }
+  return Math.sqrt(sum)
+}
+
+export interface SimilarIngredient {
+  ingredient: Ingredient
+  distance: number
+  similarity: number
+}
+
+export function findSimilarIngredients(
+  targetIngredient: Ingredient,
+  allIngredients: Ingredient[],
+  options: {
+    sameCategory?: boolean
+    limit?: number
+  } = {}
+): SimilarIngredient[] {
+  const { sameCategory = true, limit = 5 } = options
+  
+  let candidates = allIngredients.filter(i => i.id !== targetIngredient.id)
+  
+  if (sameCategory) {
+    candidates = candidates.filter(i => i.category === targetIngredient.category)
+  }
+  
+  if (candidates.length === 0) return []
+  
+  const allForMax = [...candidates, targetIngredient]
+  const maxValues = getNutrientMaxValues(allForMax)
+  
+  const targetVector = normalizeVector(getIngredientNutrientVector(targetIngredient), maxValues)
+  
+  const results: SimilarIngredient[] = candidates.map(ingredient => {
+    const candidateVector = normalizeVector(getIngredientNutrientVector(ingredient), maxValues)
+    const distance = euclideanDistance(targetVector, candidateVector)
+    return { ingredient, distance, similarity: 0 }
+  })
+  
+  results.sort((a, b) => a.distance - b.distance)
+  
+  const maxDistance = results.length > 0 ? results[results.length - 1].distance : 1
+  const minDistance = results.length > 0 ? results[0].distance : 0
+  
+  for (const r of results) {
+    if (maxDistance === minDistance) {
+      r.similarity = 100
+    } else {
+      r.similarity = Math.round(((maxDistance - r.distance) / (maxDistance - minDistance)) * 100)
+    }
+  }
+  
+  if (results.length > 0) {
+    results[0].similarity = 100
+  }
+  
+  return results.slice(0, limit)
+}
+
+export function calculateReplacementNutritionChange(
+  originalIngredient: Ingredient,
+  newIngredient: Ingredient,
+  amount: number
+): {
+  original: NutritionSummary
+  new: NutritionSummary
+  changes: Record<keyof NutritionSummary, { value: number; percentage: number; isIncrease: boolean }>
+} {
+  const factor = amount / 100
+  
+  const original: NutritionSummary = {
+    calories: originalIngredient.calories * factor,
+    calories_kj: Math.round(originalIngredient.calories * factor * 4.184),
+    protein: originalIngredient.protein * factor,
+    fat: originalIngredient.fat * factor,
+    carbs: originalIngredient.carbs * factor,
+    fiber: originalIngredient.fiber * factor,
+    sodium: originalIngredient.sodium * factor,
+    calcium: originalIngredient.calcium * factor,
+    iron: originalIngredient.iron * factor,
+    vitamin_a: originalIngredient.vitamin_a * factor,
+    vitamin_c: originalIngredient.vitamin_c * factor
+  }
+  
+  const newNutrition: NutritionSummary = {
+    calories: newIngredient.calories * factor,
+    calories_kj: Math.round(newIngredient.calories * factor * 4.184),
+    protein: newIngredient.protein * factor,
+    fat: newIngredient.fat * factor,
+    carbs: newIngredient.carbs * factor,
+    fiber: newIngredient.fiber * factor,
+    sodium: newIngredient.sodium * factor,
+    calcium: newIngredient.calcium * factor,
+    iron: newIngredient.iron * factor,
+    vitamin_a: newIngredient.vitamin_a * factor,
+    vitamin_c: newIngredient.vitamin_c * factor
+  }
+  
+  const changes = {} as Record<keyof NutritionSummary, { value: number; percentage: number; isIncrease: boolean }>
+  
+  const keys = Object.keys(original) as (keyof NutritionSummary)[]
+  for (const key of keys) {
+    const diff = newNutrition[key] - original[key]
+    const percentage = original[key] === 0 ? 0 : (diff / original[key]) * 100
+    changes[key] = {
+      value: diff,
+      percentage,
+      isIncrease: diff > 0
+    }
+  }
+  
+  return { original, new: newNutrition, changes }
 }

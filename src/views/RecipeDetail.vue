@@ -84,9 +84,12 @@
               </el-button>
             </div>
             <el-table
+              ref="ingredientTableRef"
               :data="currentRecipe?.ingredients || []"
               stripe
-              style="width: 100%;"
+              highlight-current-row
+              @row-click="handleIngredientRowClick"
+              style="width: 100%; cursor: pointer;"
             >
               <el-table-column prop="ingredient.name" label="食材" min-width="120">
                 <template #default="{ row }">
@@ -174,6 +177,14 @@
       </el-col>
 
       <el-col :span="8">
+        <IngredientReplacePanel
+          :selected-ingredient="selectedIngredientForReplace"
+          :amount="selectedIngredientAmount"
+          :all-ingredients="ingredientStore.ingredients"
+          @replace="handleIngredientReplace"
+          style="margin-bottom: 20px;"
+        />
+
         <div class="nutrition-panel">
           <el-tabs v-model="activeTab">
             <el-tab-pane label="营养分析" name="analysis">
@@ -391,7 +402,8 @@ import { useIngredientStore } from '@/stores/ingredient'
 import { RECIPE_CATEGORIES, NUTRIENT_LABELS, NUTRIENT_UNITS, type NutritionSummary } from '@/types'
 import DRIRadarChart from '@/components/DRIRadarChart.vue'
 import NutritionLabel from '@/components/NutritionLabel.vue'
-import type { RecipeIngredient } from '@/types'
+import IngredientReplacePanel from '@/components/IngredientReplacePanel.vue'
+import type { RecipeIngredient, Ingredient } from '@/types'
 import html2canvas from 'html2canvas'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile } from '@tauri-apps/plugin-fs'
@@ -422,6 +434,10 @@ const newIngredientAmount = ref<number>(100)
 
 const targetNutrient = ref<keyof NutritionSummary>('protein')
 const targetValue = ref<number>(30)
+
+const selectedIngredientForReplace = ref<Ingredient | null>(null)
+const selectedIngredientAmount = ref<number>(0)
+const selectedRecipeIngredientId = ref<number | null>(null)
 
 const currentRecipe = computed(() => recipeStore.currentRecipe)
 const nutrition = computed(() => recipeStore.nutritionCalculations)
@@ -467,6 +483,19 @@ watch(
       recipeForm.category = newVal.category
       recipeForm.servings = newVal.servings
       recipeForm.notes = newVal.notes
+    }
+  },
+  { deep: true }
+)
+
+watch(
+  () => currentRecipe.value?.ingredients,
+  () => {
+    if (selectedRecipeIngredientId.value !== null && currentRecipe.value) {
+      const ri = currentRecipe.value.ingredients.find(i => i.id === selectedRecipeIngredientId.value)
+      if (ri) {
+        selectedIngredientAmount.value = ri.amount
+      }
     }
   },
   { deep: true }
@@ -537,9 +566,44 @@ async function removeIngredient(id: number) {
       { type: 'warning' }
     )
     await recipeStore.removeIngredient(id)
+    
+    if (selectedRecipeIngredientId.value === id) {
+      selectedIngredientForReplace.value = null
+      selectedIngredientAmount.value = 0
+      selectedRecipeIngredientId.value = null
+    }
+    
     ElMessage.success('已移除')
   } catch (error) {
     // 用户取消
+  }
+}
+
+function handleIngredientRowClick(row: RecipeIngredient) {
+  if (row.ingredient) {
+    selectedIngredientForReplace.value = row.ingredient
+    selectedIngredientAmount.value = row.amount
+    selectedRecipeIngredientId.value = row.id
+  }
+}
+
+async function handleIngredientReplace(newIngredient: Ingredient) {
+  if (!currentRecipe.value || selectedRecipeIngredientId.value === null) return
+
+  const recipeIngredient = currentRecipe.value.ingredients.find(ri => ri.id === selectedRecipeIngredientId.value)
+  if (!recipeIngredient) return
+
+  const amount = recipeIngredient.amount
+  
+  await recipeStore.removeIngredient(selectedRecipeIngredientId.value)
+  await recipeStore.addIngredient(currentRecipe.value.id, newIngredient.id, amount)
+
+  selectedIngredientForReplace.value = newIngredient
+  selectedIngredientAmount.value = amount
+
+  const newRi = currentRecipe.value.ingredients.find(ri => ri.ingredient_id === newIngredient.id)
+  if (newRi) {
+    selectedRecipeIngredientId.value = newRi.id
   }
 }
 

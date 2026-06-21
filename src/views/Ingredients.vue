@@ -29,6 +29,14 @@
         </el-select>
       </div>
       <div class="toolbar-right">
+        <el-button 
+          type="success" 
+          @click="openCompareDialog"
+          :disabled="selectedForCompare.length < 2"
+        >
+          <el-icon><DataAnalysis /></el-icon>
+          营养素对比 ({{ selectedForCompare.length }}/4)
+        </el-button>
         <el-button type="primary" @click="openBatchPriceDialog">
           <el-icon><Money /></el-icon>
           批量设置价格
@@ -42,11 +50,14 @@
 
     <div class="content">
       <el-table
+        ref="ingredientTableRef"
         :data="ingredientStore.filteredIngredients"
         v-loading="ingredientStore.loading"
         stripe
+        @selection-change="handleSelectionChange"
         style="width: 100%;"
       >
+        <el-table-column type="selection" width="55" :selectable="isSelectable" />
         <el-table-column prop="name" label="食材名称" min-width="120">
           <template #default="{ row }">
             <span>{{ row.name }}</span>
@@ -219,6 +230,12 @@
       </template>
     </el-dialog>
 
+    <NutritionCompareDialog
+      v-model="compareDialogVisible"
+      :ingredients="selectedForCompare"
+      @remove="handleRemoveFromCompare"
+    />
+
     <el-dialog
       v-model="batchPriceDialogVisible"
       title="批量设置食材价格"
@@ -274,10 +291,11 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Search, Plus, Money } from '@element-plus/icons-vue'
+import { Search, Plus, Money, DataAnalysis } from '@element-plus/icons-vue'
 import { useIngredientStore } from '@/stores/ingredient'
 import { INGREDIENT_CATEGORIES } from '@/types'
 import type { Ingredient } from '@/types'
+import NutritionCompareDialog from '@/components/NutritionCompareDialog.vue'
 
 const ingredientStore = useIngredientStore()
 
@@ -289,6 +307,9 @@ const isEdit = ref(false)
 const editId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const batchPrice = ref<number | null>(null)
+const ingredientTableRef = ref<any>(null)
+const compareDialogVisible = ref(false)
+const selectedForCompare = ref<Ingredient[]>([])
 
 const formData = reactive({
   name: '',
@@ -329,6 +350,43 @@ function handleSearch() {
 
 function handleCategoryChange() {
   ingredientStore.setCategory(selectedCategory.value)
+}
+
+function handleSelectionChange(selection: Ingredient[]) {
+  selectedForCompare.value = selection.slice(0, 4)
+}
+
+function isSelectable(row: Ingredient): boolean {
+  if (selectedForCompare.value.length >= 4) {
+    return selectedForCompare.value.some(s => s.id === row.id)
+  }
+  return true
+}
+
+function openCompareDialog() {
+  if (selectedForCompare.value.length < 2) {
+    ElMessage.warning('请至少选择2种食材进行对比')
+    return
+  }
+  if (selectedForCompare.value.length > 4) {
+    ElMessage.warning('最多只能选择4种食材进行对比')
+    return
+  }
+  compareDialogVisible.value = true
+}
+
+function handleRemoveFromCompare(id: number) {
+  selectedForCompare.value = selectedForCompare.value.filter(i => i.id !== id)
+  
+  if (ingredientTableRef.value) {
+    const table = ingredientTableRef.value
+    if (table.toggleRowSelection) {
+      const row = ingredientStore.ingredients.find(i => i.id === id)
+      if (row) {
+        table.toggleRowSelection(row, false)
+      }
+    }
+  }
 }
 
 function openAddDialog() {
