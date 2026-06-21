@@ -445,7 +445,7 @@
       v-model="versionsDrawerVisible"
       title="配方历史版本"
       direction="rtl"
-      size="480px"
+      size="560px"
     >
       <div class="versions-toolbar">
         <el-button
@@ -457,25 +457,110 @@
           <el-icon><Plus /></el-icon>
           保存当前版本
         </el-button>
+        <el-button
+          type="success"
+          size="small"
+          :disabled="selectedCompareIds.length !== 2"
+          @click="openCompareView"
+        >
+          <el-icon><DataLine /></el-icon>
+          对比
+        </el-button>
+        <el-button
+          type="warning"
+          size="small"
+          :disabled="selectedExportIds.length === 0"
+          @click="handleExportVersions"
+        >
+          <el-icon><Download /></el-icon>
+          导出
+        </el-button>
+        <el-button
+          type="info"
+          size="small"
+          @click="handleImportVersions"
+        >
+          <el-icon><Upload /></el-icon>
+          导入
+        </el-button>
+      </div>
+      <div v-if="compareViewVisible" class="compare-view">
+        <div class="compare-header">
+          <span class="compare-title">版本对比</span>
+          <el-button size="small" link @click="compareViewVisible = false">
+            <el-icon><Close /></el-icon> 关闭对比
+          </el-button>
+        </div>
+        <div class="compare-columns">
+          <div class="compare-col">
+            <div class="compare-col-title">v{{ compareVersionA?.version_number }}</div>
+            <div
+              v-for="item in compareItemsA"
+              :key="item.ingredient_id"
+              class="compare-ingredient"
+              :class="item.changeType"
+            >
+              <span class="ci-name">{{ item.ingredient_name }}</span>
+              <span class="ci-amount">{{ item.amount.toFixed(1) }}g</span>
+              <span v-if="item.changeAmount" class="ci-change">{{ item.changeAmount }}</span>
+            </div>
+          </div>
+          <div class="compare-col">
+            <div class="compare-col-title">v{{ compareVersionB?.version_number }}</div>
+            <div
+              v-for="item in compareItemsB"
+              :key="item.ingredient_id"
+              class="compare-ingredient"
+              :class="item.changeType"
+            >
+              <span class="ci-name">{{ item.ingredient_name }}</span>
+              <span class="ci-amount">{{ item.amount.toFixed(1) }}g</span>
+              <span v-if="item.changeAmount" class="ci-change">{{ item.changeAmount }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="compare-chart">
+          <div class="compare-chart-title">营养素对比</div>
+          <div ref="compareChartRef" style="width: 100%; height: 260px;"></div>
+        </div>
       </div>
       <div v-if="versionsLoading" class="versions-loading">
         <el-icon class="is-loading" :size="24"><Loading /></el-icon>
         加载中...
       </div>
       <el-empty
-        v-else-if="versions.length === 0"
+        v-else-if="sortedVersions.length === 0"
         description="暂无历史版本，点击上方按钮保存"
       />
       <div v-else class="versions-list">
         <div
-          v-for="(ver, idx) in versions"
+          v-for="(ver, idx) in sortedVersions"
           :key="ver.id"
           class="version-item"
           :class="{ active: expandedVersionId === ver.id }"
-          @click="toggleVersionExpand(ver)"
         >
-          <div class="version-header">
+          <div class="version-header" @click="toggleVersionExpand(ver)">
             <div class="version-info">
+              <el-checkbox
+                :model-value="selectedCompareIds.includes(ver.id)"
+                @change="(val: boolean) => toggleCompareSelect(ver.id, val)"
+                @click.stop
+                size="small"
+              />
+              <el-checkbox
+                :model-value="selectedExportIds.includes(ver.id)"
+                @change="(val: boolean) => toggleExportSelect(ver.id, val)"
+                @click.stop
+                size="small"
+              />
+              <el-icon
+                class="star-btn"
+                :class="{ starred: ver.is_starred }"
+                @click.stop="handleToggleStar(ver)"
+              >
+                <StarFilled v-if="ver.is_starred" />
+                <Star v-else />
+              </el-icon>
               <span class="version-badge">
                 v{{ ver.version_number }}
                 <el-tag
@@ -493,9 +578,24 @@
               <ArrowUp v-else />
             </el-icon>
           </div>
-          <div class="version-summary">{{ ver.summary }}</div>
+          <div class="version-summary" @click="toggleVersionExpand(ver)">{{ ver.summary }}</div>
+          <div v-if="ver.note" class="version-note" @click="toggleVersionExpand(ver)">{{ ver.note }}</div>
 
           <div v-if="expandedVersionId === ver.id" class="version-detail">
+            <div class="version-note-edit">
+              <el-input
+                v-model="versionNoteEdit"
+                type="textarea"
+                :rows="2"
+                maxlength="200"
+                show-word-limit
+                placeholder="添加版本备注（可选，最多200字）"
+                size="small"
+              />
+              <el-button size="small" type="primary" @click="saveVersionNote(ver)" style="margin-top: 4px;">
+                保存备注
+              </el-button>
+            </div>
             <div v-if="versionDiffs[ver.id]" class="diff-section">
               <div v-if="versionDiffs[ver.id]!.added.length > 0" class="diff-group">
                 <div class="diff-title added">新增食材</div>
@@ -557,6 +657,48 @@
         </div>
       </div>
     </el-drawer>
+
+    <el-dialog
+      v-model="conflictDialogVisible"
+      title="回退冲突处理"
+      width="680px"
+      :close-on-click-modal="false"
+    >
+      <div class="conflict-intro">
+        回退到 <strong>v{{ rollbackTargetVersion?.version_number }}</strong> 后，以下食材将会丢失。请选择保留或丢弃：
+      </div>
+      <div class="conflict-list">
+        <div
+          v-for="item in conflictItems"
+          :key="item.ingredient_id"
+          class="conflict-item"
+        >
+          <div class="conflict-item-info">
+            <el-tag size="small" type="info">{{ item.category }}</el-tag>
+            <span class="conflict-name">{{ item.ingredient_name }}</span>
+            <span class="conflict-amount">{{ item.amount.toFixed(1) }}g</span>
+          </div>
+          <div class="conflict-item-actions">
+            <el-radio-group v-model="item.action" size="small">
+              <el-radio-button value="discard">丢弃</el-radio-button>
+              <el-radio-button value="keep">保留</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="conflict-item-preview">
+            <span v-if="item.action === 'discard'" class="preview-discard">
+              丢弃后: 热量 {{ (conflictBaseNutrition.calories - item.calories).toFixed(0) }}kcal, 蛋白质 {{ (conflictBaseNutrition.protein - item.protein).toFixed(1) }}g
+            </span>
+            <span v-else class="preview-keep">
+              保留后: 热量 {{ (conflictBaseNutrition.calories).toFixed(0) }}kcal, 蛋白质 {{ (conflictBaseNutrition.protein).toFixed(1) }}g
+            </span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="conflictDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="executeRollbackWithMerge">确认回退</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="importDialogVisible"
@@ -736,7 +878,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Star, StarFilled, Plus, Delete, Search, Download, Document, Grid, RefreshRight,
   Clock, CollectionTag, Upload, Loading, ArrowDown, ArrowUp, CirclePlus, CircleClose,
-  RefreshLeft, UploadFilled, Setting
+  RefreshLeft, UploadFilled, Setting, Close, DataLine
 } from '@element-plus/icons-vue'
 import { useRecipeStore } from '@/stores/recipe'
 import { useIngredientStore } from '@/stores/ingredient'
@@ -750,6 +892,8 @@ import {
   type ImportIngredientMatch,
   type ImportConfirmedItem,
   type NutrientKey,
+  type IngredientSnapshotItem,
+  type CompareIngredientItem,
 } from '@/types'
 import DRIRadarChart from '@/components/DRIRadarChart.vue'
 import NutritionLabel from '@/components/NutritionLabel.vue'
@@ -761,6 +905,7 @@ import { save, open } from '@tauri-apps/plugin-dialog'
 import { writeFile, readTextFile } from '@tauri-apps/plugin-fs'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
+import * as echarts from 'echarts'
 
 const route = useRoute()
 const router = useRouter()
@@ -803,6 +948,126 @@ const versions = ref<RecipeVersion[]>([])
 const expandedVersionId = ref<number | null>(null)
 const versionDiffs = reactive<Record<number, VersionDiffSummary | undefined>>({})
 const versionNutrition = reactive<Record<number, NutritionSummary | undefined>>({})
+const versionNoteEdit = ref('')
+const selectedCompareIds = ref<number[]>([])
+const selectedExportIds = ref<number[]>([])
+const compareViewVisible = ref(false)
+const compareChartRef = ref<HTMLElement | null>(null)
+let compareChartInstance: echarts.ECharts | null = null
+const conflictDialogVisible = ref(false)
+const rollbackTargetVersion = ref<RecipeVersion | null>(null)
+
+interface ConflictItem {
+  ingredient_id: number
+  ingredient_name: string
+  category: string
+  amount: number
+  calories: number
+  protein: number
+  fat: number
+  carbs: number
+  fiber: number
+  sodium: number
+  calcium: number
+  iron: number
+  vitamin_a: number
+  vitamin_c: number
+  action: 'discard' | 'keep'
+}
+const conflictItems = ref<ConflictItem[]>([])
+
+const sortedVersions = computed(() => {
+  const starred = versions.value.filter(v => v.is_starred)
+  const unstarred = versions.value.filter(v => !v.is_starred)
+  return [...starred, ...unstarred]
+})
+
+const compareVersionA = computed(() => {
+  if (selectedCompareIds.value.length < 2) return null
+  return versions.value.find(v => v.id === selectedCompareIds.value[0]) || null
+})
+
+const compareVersionB = computed(() => {
+  if (selectedCompareIds.value.length < 2) return null
+  return versions.value.find(v => v.id === selectedCompareIds.value[1]) || null
+})
+
+function buildCompareItems(version: RecipeVersion, otherVersion: RecipeVersion): CompareIngredientItem[] {
+  const curIngs: IngredientSnapshotItem[] = []
+  const otherIngs: IngredientSnapshotItem[] = []
+  try {
+    const c = JSON.parse(version.ingredients_snapshot)
+    for (const it of c) curIngs.push(it)
+  } catch { /* ignore */ }
+  try {
+    const o = JSON.parse(otherVersion.ingredients_snapshot)
+    for (const it of o) otherIngs.push(it)
+  } catch { /* ignore */ }
+
+  const curMap = new Map(curIngs.map(i => [i.ingredient_id, i]))
+  const otherMap = new Map(otherIngs.map(i => [i.ingredient_id, i]))
+  const allIds = new Set([...curMap.keys(), ...otherMap.keys()])
+  const items: CompareIngredientItem[] = []
+
+  for (const id of allIds) {
+    const cur = curMap.get(id)
+    const other = otherMap.get(id)
+    if (cur && !other) {
+      items.push({ ingredient_id: cur.ingredient_id, ingredient_name: cur.ingredient_name, category: cur.category, amount: cur.amount, changeType: 'added' })
+    } else if (!cur && other) {
+      items.push({ ingredient_id: other.ingredient_id, ingredient_name: other.ingredient_name, category: other.category, amount: other.amount, changeType: 'removed' })
+    } else if (cur && other) {
+      const diff = cur.amount - other.amount
+      if (Math.abs(diff) > 0.01) {
+        const sign = diff > 0 ? '+' : ''
+        items.push({ ingredient_id: cur.ingredient_id, ingredient_name: cur.ingredient_name, category: cur.category, amount: cur.amount, changeType: 'modified', changeAmount: `${sign}${diff.toFixed(1)}g` })
+      } else {
+        items.push({ ingredient_id: cur.ingredient_id, ingredient_name: cur.ingredient_name, category: cur.category, amount: cur.amount, changeType: 'unchanged' })
+      }
+    }
+  }
+  return items
+}
+
+const compareItemsA = computed(() => {
+  if (!compareVersionA.value || !compareVersionB.value) return []
+  return buildCompareItems(compareVersionA.value, compareVersionB.value)
+})
+
+const compareItemsB = computed(() => {
+  if (!compareVersionA.value || !compareVersionB.value) return []
+  return buildCompareItems(compareVersionB.value, compareVersionA.value)
+})
+
+const conflictBaseNutrition = computed(() => {
+  if (!rollbackTargetVersion.value) return { calories: 0, protein: 0, fat: 0, carbs: 0, fiber: 0, sodium: 0, calcium: 0, iron: 0, vitamin_a: 0, vitamin_c: 0 }
+  const nutr = parseVersionNutrition(rollbackTargetVersion.value.nutrition_snapshot)
+  let keepCalories = nutr.calories
+  let keepProtein = nutr.protein
+  let keepFat = nutr.fat
+  let keepCarbs = nutr.carbs
+  let keepFiber = nutr.fiber
+  let keepSodium = nutr.sodium
+  let keepCalcium = nutr.calcium
+  let keepIron = nutr.iron
+  let keepVitA = nutr.vitamin_a
+  let keepVitC = nutr.vitamin_c
+  for (const item of conflictItems.value) {
+    if (item.action === 'keep') {
+      keepCalories += item.calories
+      keepProtein += item.protein
+      keepFat += item.fat
+      keepCarbs += item.carbs
+      keepFiber += item.fiber
+      keepSodium += item.sodium
+      keepCalcium += item.calcium
+      keepIron += item.iron
+      keepVitA += item.vitamin_a
+      keepVitC += item.vitamin_c
+    }
+  }
+  return { calories: keepCalories, protein: keepProtein, fat: keepFat, carbs: keepCarbs, fiber: keepFiber, sodium: keepSodium, calcium: keepCalcium, iron: keepIron, vitamin_a: keepVitA, vitamin_c: keepVitC }
+})
 
 const importDialogVisible = ref(false)
 const importStep = ref<'select' | 'preview'>('select')
@@ -1280,6 +1545,9 @@ async function openVersionsDrawer() {
   versionsDrawerVisible.value = true
   versionsLoading.value = true
   expandedVersionId.value = null
+  selectedCompareIds.value = []
+  selectedExportIds.value = []
+  compareViewVisible.value = false
   try {
     versions.value = await versionApi.getAll(currentRecipe.value.id)
   } catch (e: any) {
@@ -1349,6 +1617,7 @@ function toggleVersionExpand(ver: RecipeVersion) {
     return
   }
   expandedVersionId.value = ver.id
+  versionNoteEdit.value = ver.note || ''
   versionNutrition[ver.id] = parseVersionNutrition(ver.nutrition_snapshot)
   versionDiffs[ver.id] = computeVersionDiff(ver, idx + 1)
 }
@@ -1375,6 +1644,42 @@ async function handleCreateSnapshot() {
 
 async function handleRollback(ver: RecipeVersion) {
   if (!currentRecipe.value) return
+
+  const currentIngs = currentRecipe.value.ingredients
+  let targetIngs: IngredientSnapshotItem[] = []
+  try {
+    targetIngs = JSON.parse(ver.ingredients_snapshot)
+  } catch { /* ignore */ }
+  const targetIds = new Set(targetIngs.map(i => i.ingredient_id))
+  const lostIngredients = currentIngs.filter(ri => !targetIds.has(ri.ingredient_id))
+
+  if (lostIngredients.length > 0) {
+    rollbackTargetVersion.value = ver
+    conflictItems.value = lostIngredients.map(ri => {
+      const ing = ri.ingredient
+      const factor = ri.amount / 100
+      return {
+        ingredient_id: ri.ingredient_id,
+        ingredient_name: ing?.name || '未知食材',
+        category: ing?.category || '',
+        amount: ri.amount,
+        calories: (ing?.calories || 0) * factor,
+        protein: (ing?.protein || 0) * factor,
+        fat: (ing?.fat || 0) * factor,
+        carbs: (ing?.carbs || 0) * factor,
+        fiber: (ing?.fiber || 0) * factor,
+        sodium: (ing?.sodium || 0) * factor,
+        calcium: (ing?.calcium || 0) * factor,
+        iron: (ing?.iron || 0) * factor,
+        vitamin_a: (ing?.vitamin_a || 0) * factor,
+        vitamin_c: (ing?.vitamin_c || 0) * factor,
+        action: 'discard' as const,
+      }
+    })
+    conflictDialogVisible.value = true
+    return
+  }
+
   try {
     await ElMessageBox.confirm(
       `确定要回退到 v${ver.version_number}（${formatVersionTime(ver.created_at)}）吗？\n这将创建一条新的版本记录。`,
@@ -1394,6 +1699,148 @@ async function handleRollback(ver: RecipeVersion) {
   } catch (e) {
     if (e === 'cancel') return
     ElMessage.error('回退失败')
+  }
+}
+
+async function executeRollbackWithMerge() {
+  if (!currentRecipe.value || !rollbackTargetVersion.value) return
+  const keepIds = conflictItems.value.filter(i => i.action === 'keep').map(i => i.ingredient_id)
+  try {
+    await versionApi.rollbackWithKeep(rollbackTargetVersion.value.id, keepIds)
+    versions.value = await versionApi.getAll(currentRecipe.value.id)
+    expandedVersionId.value = null
+    conflictDialogVisible.value = false
+    await recipeStore.loadRecipe(currentRecipe.value.id)
+    if (currentRecipe.value) {
+      recipeForm.name = currentRecipe.value.name
+      recipeForm.category = currentRecipe.value.category
+      recipeForm.servings = currentRecipe.value.servings
+      recipeForm.notes = currentRecipe.value.notes
+    }
+    ElMessage.success('回退成功')
+  } catch (e: any) {
+    ElMessage.error(e || '回退失败')
+  }
+}
+
+function toggleCompareSelect(id: number, checked: boolean) {
+  if (checked) {
+    if (selectedCompareIds.value.length < 2) {
+      selectedCompareIds.value.push(id)
+    } else {
+      selectedCompareIds.value.shift()
+      selectedCompareIds.value.push(id)
+    }
+  } else {
+    selectedCompareIds.value = selectedCompareIds.value.filter(i => i !== id)
+  }
+}
+
+function toggleExportSelect(id: number, checked: boolean) {
+  if (checked) {
+    selectedExportIds.value.push(id)
+  } else {
+    selectedExportIds.value = selectedExportIds.value.filter(i => i !== id)
+  }
+}
+
+async function handleToggleStar(ver: RecipeVersion) {
+  try {
+    const updated = await versionApi.toggleStar(ver.id)
+    const idx = versions.value.findIndex(v => v.id === ver.id)
+    if (idx !== -1) {
+      versions.value[idx] = updated
+    }
+  } catch (e: any) {
+    ElMessage.error(e || '操作失败')
+  }
+}
+
+async function saveVersionNote(ver: RecipeVersion) {
+  try {
+    const updated = await versionApi.updateNote(ver.id, versionNoteEdit.value)
+    const idx = versions.value.findIndex(v => v.id === ver.id)
+    if (idx !== -1) {
+      versions.value[idx] = updated
+    }
+    ElMessage.success('备注已保存')
+  } catch (e: any) {
+    ElMessage.error(e || '保存备注失败')
+  }
+}
+
+function openCompareView() {
+  if (selectedCompareIds.value.length !== 2) return
+  compareViewVisible.value = true
+  setTimeout(() => {
+    renderCompareChart()
+  }, 100)
+}
+
+function renderCompareChart() {
+  if (!compareChartRef.value || !compareVersionA.value || !compareVersionB.value) return
+  if (compareChartInstance) {
+    compareChartInstance.dispose()
+  }
+  compareChartInstance = echarts.init(compareChartRef.value)
+
+  const nutrA = parseVersionNutrition(compareVersionA.value.nutrition_snapshot)
+  const nutrB = parseVersionNutrition(compareVersionB.value.nutrition_snapshot)
+
+  const nutrientKeys: (keyof NutritionSummary)[] = [
+    'calories', 'protein', 'fat', 'carbs', 'fiber', 'sodium', 'calcium', 'iron', 'vitamin_a', 'vitamin_c'
+  ]
+
+  const labels = nutrientKeys.map(k => NUTRIENT_LABELS[k])
+  const dataA = nutrientKeys.map(k => (nutrA as any)[k] as number)
+  const dataB = nutrientKeys.map(k => (nutrB as any)[k] as number)
+
+  compareChartInstance.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: [`v${compareVersionA.value.version_number}`, `v${compareVersionB.value.version_number}`], bottom: 0 },
+    grid: { left: 50, right: 20, top: 20, bottom: 40 },
+    xAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10, rotate: 30 } },
+    yAxis: { type: 'value' },
+    series: [
+      { name: `v${compareVersionA.value.version_number}`, type: 'line', data: dataA, smooth: true, lineStyle: { color: '#409eff' }, itemStyle: { color: '#409eff' } },
+      { name: `v${compareVersionB.value.version_number}`, type: 'line', data: dataB, smooth: true, lineStyle: { color: '#e6a23c' }, itemStyle: { color: '#e6a23c' } },
+    ],
+  })
+}
+
+async function handleExportVersions() {
+  if (!currentRecipe.value || selectedExportIds.value.length === 0) return
+  try {
+    const json = await versionApi.exportVersions(currentRecipe.value.id, selectedExportIds.value)
+    const filePath = await save({
+      defaultPath: `${recipeForm.name}_versions.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (filePath) {
+      const encoder = new TextEncoder()
+      await writeFile(filePath, encoder.encode(json))
+      ElMessage.success(`已导出 ${selectedExportIds.value.length} 个版本`)
+    }
+  } catch (e: any) {
+    handleExportError(e, '版本')
+  }
+}
+
+async function handleImportVersions() {
+  if (!currentRecipe.value) return
+  try {
+    const filePath = await open({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      multiple: false,
+    })
+    if (!filePath) return
+    const content = await readTextFile(filePath as string)
+    const count = await versionApi.importVersions(currentRecipe.value.id, content)
+    versions.value = await versionApi.getAll(currentRecipe.value.id)
+    ElMessage.success(`已导入 ${count} 个版本`)
+  } catch (e: any) {
+    if (e?.message?.includes('cancel') || e === 'cancel') return
+    ElMessage.error(e || '导入版本失败')
   }
 }
 
@@ -1854,6 +2301,84 @@ async function exportJson() {
     margin-bottom: 16px;
     padding-bottom: 12px;
     border-bottom: 1px solid #ebeef5;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .compare-view {
+    margin-bottom: 16px;
+    border: 1px solid #dcdfe6;
+    border-radius: 8px;
+    padding: 12px;
+    background: #fafbfc;
+  }
+
+  .compare-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+
+    .compare-title {
+      font-weight: 600;
+      font-size: 14px;
+      color: #303133;
+    }
+  }
+
+  .compare-columns {
+    display: flex;
+    gap: 12px;
+  }
+
+  .compare-col {
+    flex: 1;
+    min-width: 0;
+
+    .compare-col-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: #409eff;
+      text-align: center;
+      margin-bottom: 8px;
+      padding: 4px 0;
+      background: #ecf5ff;
+      border-radius: 4px;
+    }
+  }
+
+  .compare-ingredient {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin-bottom: 2px;
+
+    .ci-name { flex: 1; }
+    .ci-amount { color: #606266; }
+    .ci-change { font-weight: 600; font-size: 11px; }
+
+    &.added { background: #f0f9eb; }
+    &.added .ci-change { color: #67c23a; }
+    &.removed { background: #fef0f0; }
+    &.removed .ci-change { color: #f56c6c; }
+    &.modified { background: #fdf6ec; }
+    &.modified .ci-change { color: #e6a23c; }
+    &.unchanged { background: #f5f7fa; }
+  }
+
+  .compare-chart {
+    margin-top: 16px;
+
+    .compare-chart-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: #303133;
+      margin-bottom: 8px;
+    }
   }
 
   .versions-loading {
@@ -1869,6 +2394,46 @@ async function exportJson() {
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .conflict-intro {
+    margin-bottom: 16px;
+    font-size: 14px;
+    color: #606266;
+    line-height: 1.6;
+  }
+
+  .conflict-list {
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .conflict-item {
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+
+    .conflict-item-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+
+      .conflict-name { font-weight: 600; color: #303133; }
+      .conflict-amount { color: #909399; font-size: 12px; }
+    }
+
+    .conflict-item-actions {
+      margin-bottom: 6px;
+    }
+
+    .conflict-item-preview {
+      font-size: 12px;
+
+      .preview-discard { color: #f56c6c; }
+      .preview-keep { color: #67c23a; }
+    }
   }
 
   .version-item {
@@ -1895,7 +2460,7 @@ async function exportJson() {
       .version-info {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 6px;
 
         .version-badge {
           font-weight: 700;
@@ -1906,6 +2471,16 @@ async function exportJson() {
         .version-time {
           font-size: 12px;
           color: #909399;
+        }
+
+        .star-btn {
+          color: #c0c4cc;
+          font-size: 14px;
+          cursor: pointer;
+          transition: color 0.2s;
+
+          &:hover { color: #e6a23c; }
+          &.starred { color: #e6a23c; }
         }
       }
 
@@ -1920,6 +2495,17 @@ async function exportJson() {
       font-size: 13px;
       color: #606266;
       line-height: 1.5;
+    }
+
+    .version-note {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #909399;
+      line-height: 1.4;
+    }
+
+    .version-note-edit {
+      margin-bottom: 12px;
     }
 
     .version-detail {

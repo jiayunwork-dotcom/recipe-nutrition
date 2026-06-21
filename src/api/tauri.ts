@@ -116,8 +116,8 @@ export const presetApi = {
 }
 
 export const versionApi = {
-  createSnapshot: (recipeId: number, summary: string): Promise<RecipeVersion> =>
-    invoke('create_version_snapshot', { recipeId, summary }),
+  createSnapshot: (recipeId: number, summary: string, note?: string): Promise<RecipeVersion> =>
+    invoke('create_version_snapshot', { recipeId, summary, note }),
 
   getAll: (recipeId: number): Promise<RecipeVersion[]> =>
     invoke('get_recipe_versions', { recipeId }),
@@ -131,6 +131,21 @@ export const versionApi = {
 
   rollback: (versionId: number): Promise<Recipe> =>
     invoke('rollback_to_version', { versionId }),
+
+  rollbackWithKeep: (versionId: number, keepIngredientIds: number[]): Promise<Recipe> =>
+    invoke('rollback_to_version_with_keep', { versionId, keepIngredientIds }),
+
+  updateNote: (versionId: number, note: string): Promise<RecipeVersion> =>
+    invoke('update_version_note', { versionId, note }),
+
+  toggleStar: (versionId: number): Promise<RecipeVersion> =>
+    invoke('toggle_version_star', { versionId }),
+
+  exportVersions: (recipeId: number, versionIds: number[]): Promise<string> =>
+    invoke('export_versions_json', { recipeId, versionIds }),
+
+  importVersions: (recipeId: number, jsonContent: string): Promise<number> =>
+    invoke('import_versions_json', { recipeId, jsonContent }),
 }
 
 export const templateApi = {

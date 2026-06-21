@@ -157,6 +157,8 @@ pub struct RecipeVersion {
     pub nutrition_snapshot: String,
     pub is_rollback: bool,
     pub rollback_from_version: Option<i32>,
+    pub note: String,
+    pub is_starred: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -371,4 +373,28 @@ pub struct VersionDiffSummary {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub modified: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionSnapshotExport {
+    pub id: i64,
+    pub recipe_id: i64,
+    pub version_number: i32,
+    pub summary: String,
+    pub ingredients_snapshot: String,
+    pub nutrition_snapshot: String,
+    pub is_rollback: bool,
+    pub rollback_from_version: Option<i32>,
+    pub note: String,
+    pub is_starred: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionsExportFormat {
+    pub format_version: String,
+    pub exported_at: String,
+    pub recipe_id: i64,
+    pub recipe_name: String,
+    pub versions: Vec<VersionSnapshotExport>,
 }

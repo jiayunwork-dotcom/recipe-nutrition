@@ -80,6 +80,16 @@ impl Database {
         ).ok();
 
         conn.execute(
+            "ALTER TABLE recipe_versions ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+            [],
+        ).ok();
+
+        conn.execute(
+            "ALTER TABLE recipe_versions ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0",
+            [],
+        ).ok();
+
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS nutrition_presets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -843,7 +853,7 @@ impl Database {
     pub fn get_recipe_versions(&self, recipe_id: i64) -> Result<Vec<RecipeVersion>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, created_at FROM recipe_versions WHERE recipe_id = ? ORDER BY version_number DESC"
+            "SELECT id, recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, note, is_starred, created_at FROM recipe_versions WHERE recipe_id = ? ORDER BY version_number DESC"
         )?;
         let rows = stmt.query_map(params![recipe_id], Self::row_to_recipe_version)?;
         let mut versions = Vec::new();
@@ -856,7 +866,7 @@ impl Database {
     pub fn get_recipe_version(&self, id: i64) -> Result<RecipeVersion> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, created_at FROM recipe_versions WHERE id = ?"
+            "SELECT id, recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, note, is_starred, created_at FROM recipe_versions WHERE id = ?"
         )?;
         stmt.query_row(params![id], Self::row_to_recipe_version)
     }
@@ -871,7 +881,9 @@ impl Database {
             nutrition_snapshot: row.get(5)?,
             is_rollback: row.get::<_, i32>(6)? != 0,
             rollback_from_version: row.get(7)?,
-            created_at: row.get::<_, String>(8)?.parse().unwrap(),
+            note: row.get(8)?,
+            is_starred: row.get::<_, i32>(9)? != 0,
+            created_at: row.get::<_, String>(10)?.parse().unwrap(),
         })
     }
 
@@ -893,6 +905,8 @@ impl Database {
         nutrition_snapshot: &str,
         is_rollback: bool,
         rollback_from_version: Option<i32>,
+        note: &str,
+        is_starred: bool,
     ) -> Result<RecipeVersion> {
         let conn = self.conn.lock().unwrap();
         let version_number = {
@@ -905,8 +919,8 @@ impl Database {
         };
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO recipe_versions (recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO recipe_versions (recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, note, is_starred, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 recipe_id,
                 version_number,
@@ -915,6 +929,8 @@ impl Database {
                 nutrition_snapshot,
                 is_rollback as i32,
                 rollback_from_version,
+                note,
+                is_starred as i32,
                 now,
             ],
         )?;
@@ -1284,11 +1300,17 @@ impl Database {
             nutrition_snapshot,
             false,
             None,
+            "",
+            false,
         )?;
         Ok(updated)
     }
 
     pub fn rollback_to_version(&self, version_id: i64) -> Result<Recipe> {
+        self.rollback_to_version_with_keep(version_id, &[])
+    }
+
+    pub fn rollback_to_version_with_keep(&self, version_id: i64, keep_ingredient_ids: &[i64]) -> Result<Recipe> {
         let conn = self.conn.lock().unwrap();
         let version = self.get_recipe_version(version_id)?;
         let now = Utc::now().to_rfc3339();
@@ -1305,6 +1327,15 @@ impl Database {
             ).ok();
         }
 
+        for &keep_id in keep_ingredient_ids {
+            if !snapshot.iter().any(|s| s.ingredient_id == keep_id) {
+                conn.execute(
+                    "INSERT INTO recipe_ingredients (recipe_id, ingredient_id, amount, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    params![version.recipe_id, keep_id, 100.0, now, now],
+                ).ok();
+            }
+        }
+
         drop(conn);
 
         let rollback_summary = format!("回退到版本{}", version.version_number);
@@ -1318,8 +1349,91 @@ impl Database {
             &nutrition_snapshot_copy,
             true,
             Some(version.version_number),
+            "",
+            false,
         )?;
 
         self.get_recipe(version.recipe_id)
+    }
+
+    pub fn update_version_note(&self, version_id: i64, note: &str) -> Result<RecipeVersion> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE recipe_versions SET note = ? WHERE id = ?",
+            params![note, version_id],
+        )?;
+        drop(conn);
+        self.get_recipe_version(version_id)
+    }
+
+    pub fn toggle_version_star(&self, version_id: i64) -> Result<RecipeVersion> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE recipe_versions SET is_starred = NOT is_starred WHERE id = ?",
+            params![version_id],
+        )?;
+        drop(conn);
+        self.get_recipe_version(version_id)
+    }
+
+    pub fn get_versions_by_ids(&self, version_ids: &[i64]) -> Result<Vec<RecipeVersion>> {
+        let conn = self.conn.lock().unwrap();
+        let placeholders: Vec<String> = version_ids.iter().map(|_| "?".to_string()).collect();
+        let sql = format!(
+            "SELECT id, recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, note, is_starred, created_at FROM recipe_versions WHERE id IN ({})",
+            placeholders.join(",")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params_vec: Vec<&dyn rusqlite::types::ToSql> = version_ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let rows = stmt.query_map(params_vec.as_slice(), Self::row_to_recipe_version)?;
+        let mut versions = Vec::new();
+        for row in rows {
+            versions.push(row?);
+        }
+        Ok(versions)
+    }
+
+    pub fn import_version_snapshots(&self, recipe_id: i64, snapshots: Vec<VersionSnapshotExport>) -> Result<Vec<RecipeVersion>> {
+        let mut result = Vec::new();
+        for snap in &snapshots {
+            {
+                let conn = self.conn.lock().unwrap();
+                let version_number = {
+                    let max_vn: Option<i32> = conn.query_row(
+                        "SELECT MAX(version_number) FROM recipe_versions WHERE recipe_id = ?",
+                        params![recipe_id],
+                        |row| row.get(0),
+                    )?;
+                    max_vn.unwrap_or(0) + 1
+                };
+                conn.execute(
+                    "INSERT INTO recipe_versions (recipe_id, version_number, summary, ingredients_snapshot, nutrition_snapshot, is_rollback, rollback_from_version, note, is_starred, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    params![
+                        recipe_id,
+                        version_number,
+                        snap.summary,
+                        snap.ingredients_snapshot,
+                        snap.nutrition_snapshot,
+                        snap.is_rollback as i32,
+                        snap.rollback_from_version,
+                        snap.note,
+                        snap.is_starred as i32,
+                        snap.created_at,
+                    ],
+                )?;
+            }
+            let last_id = {
+                let conn = self.conn.lock().unwrap();
+                conn.query_row(
+                    "SELECT MAX(id) FROM recipe_versions WHERE recipe_id = ?",
+                    params![recipe_id],
+                    |row| row.get::<_, i64>(0),
+                )?
+            };
+            let v = self.get_recipe_version(last_id)?;
+            result.push(v);
+        }
+        Ok(result)
     }
 }

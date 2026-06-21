@@ -308,6 +308,7 @@ fn create_version_snapshot(
     state: State<AppState>,
     recipe_id: i64,
     summary: String,
+    note: Option<String>,
 ) -> Result<RecipeVersion, String> {
     let recipe = state.db.get_recipe(recipe_id).map_err(|e| e.to_string())?;
     
@@ -347,6 +348,8 @@ fn create_version_snapshot(
             &nutrition_snapshot,
             false,
             None,
+            &note.unwrap_or_default(),
+            false,
         )
         .map_err(|e| e.to_string())
 }
@@ -423,6 +426,93 @@ fn get_version_diff(
 #[tauri::command]
 fn rollback_to_version(state: State<AppState>, version_id: i64) -> Result<Recipe, String> {
     state.db.rollback_to_version(version_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn rollback_to_version_with_keep(
+    state: State<AppState>,
+    version_id: i64,
+    keep_ingredient_ids: Vec<i64>,
+) -> Result<Recipe, String> {
+    state.db
+        .rollback_to_version_with_keep(version_id, &keep_ingredient_ids)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_version_note(
+    state: State<AppState>,
+    version_id: i64,
+    note: String,
+) -> Result<RecipeVersion, String> {
+    state.db
+        .update_version_note(version_id, &note)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn toggle_version_star(
+    state: State<AppState>,
+    version_id: i64,
+) -> Result<RecipeVersion, String> {
+    state.db
+        .toggle_version_star(version_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_versions_json(
+    state: State<AppState>,
+    recipe_id: i64,
+    version_ids: Vec<i64>,
+) -> Result<String, String> {
+    let recipe = state.db.get_recipe(recipe_id).map_err(|e| e.to_string())?;
+    let versions = state.db
+        .get_versions_by_ids(&version_ids)
+        .map_err(|e| e.to_string())?;
+
+    let snapshots: Vec<VersionSnapshotExport> = versions.iter().map(|v| {
+        VersionSnapshotExport {
+            id: v.id,
+            recipe_id: v.recipe_id,
+            version_number: v.version_number,
+            summary: v.summary.clone(),
+            ingredients_snapshot: v.ingredients_snapshot.clone(),
+            nutrition_snapshot: v.nutrition_snapshot.clone(),
+            is_rollback: v.is_rollback,
+            rollback_from_version: v.rollback_from_version,
+            note: v.note.clone(),
+            is_starred: v.is_starred,
+            created_at: v.created_at.to_rfc3339(),
+        }
+    }).collect();
+
+    let export = VersionsExportFormat {
+        format_version: "1.0".to_string(),
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        recipe_id,
+        recipe_name: recipe.name,
+        versions: snapshots,
+    };
+
+    serde_json::to_string_pretty(&export).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_versions_json(
+    state: State<AppState>,
+    recipe_id: i64,
+    json_content: String,
+) -> Result<i32, String> {
+    let import: VersionsExportFormat = serde_json::from_str(&json_content)
+        .map_err(|e| format!("JSON 解析失败: {}", e))?;
+
+    let count = import.versions.len() as i32;
+    state.db
+        .import_version_snapshots(recipe_id, import.versions)
+        .map_err(|e| e.to_string())?;
+
+    Ok(count)
 }
 
 #[tauri::command]
@@ -785,6 +875,11 @@ fn main() {
             get_recipe_versions,
             get_version_diff,
             rollback_to_version,
+            rollback_to_version_with_keep,
+            update_version_note,
+            toggle_version_star,
+            export_versions_json,
+            import_versions_json,
             get_templates,
             get_template,
             create_template,

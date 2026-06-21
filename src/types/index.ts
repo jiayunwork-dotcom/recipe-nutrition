@@ -167,6 +167,8 @@ export interface RecipeVersion {
   nutrition_snapshot: string
   is_rollback: boolean
   rollback_from_version: number | null
+  note: string
+  is_starred: boolean
   created_at: string
 }
 
@@ -311,4 +313,35 @@ export interface VersionDiffSummary {
   added: string[]
   removed: string[]
   modified: string[]
+}
+
+export interface VersionSnapshotExport {
+  id: number
+  recipe_id: number
+  version_number: number
+  summary: string
+  ingredients_snapshot: string
+  nutrition_snapshot: string
+  is_rollback: boolean
+  rollback_from_version: number | null
+  note: string
+  is_starred: boolean
+  created_at: string
+}
+
+export interface VersionsExportFormat {
+  format_version: string
+  exported_at: string
+  recipe_id: number
+  recipe_name: string
+  versions: VersionSnapshotExport[]
+}
+
+export interface CompareIngredientItem {
+  ingredient_id: number
+  ingredient_name: string
+  category: string
+  amount: number
+  changeType: 'added' | 'removed' | 'modified' | 'unchanged'
+  changeAmount?: string
 }
