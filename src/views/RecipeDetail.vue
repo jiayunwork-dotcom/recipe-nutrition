@@ -611,7 +611,7 @@
             v-for="(match, idx) in importPreview.ingredient_matches"
             :key="idx"
             class="match-item"
-            :class="{ needs-review: match.requires_confirmation }"
+            :class="{ 'needs-review': match.requires_confirmation }"
           >
             <div class="match-exported">
               <el-tag size="small" type="info">{{ match.exported.category }}</el-tag>
